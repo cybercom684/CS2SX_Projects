@@ -2,6 +2,8 @@
 
 Nintendo Switch Homebrew App, erstellt mit [CS2SX](https://github.com/yourusername/cs2sx).
 
+Wichtig: die font.ttf muss im selben verzeichnis wie die .nro liegen.
+
 ## Build
 
 ```bash
