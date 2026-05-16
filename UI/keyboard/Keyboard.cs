@@ -58,6 +58,13 @@ public class Keyboard
     private int _lastTouchRow = -1;
     private int _lastTouchCol = -1;
 
+    // Key-Repeat für DEL (Touch + B-Taste)
+    // Ablauf: Taste gedrückt → sofort 1× auslösen → 500ms warten → dann alle 60ms wiederholen
+    private const int RepeatDelay    = 30;  // Frames bis Repeat beginnt (≈500ms bei 60fps)
+    private const int RepeatInterval =  4;  // Frames zwischen Wiederholungen (≈67ms → ~15/s)
+    private bool _delHeld       = false;    // DEL wird gerade gehalten
+    private int  _delHoldFrames = 0;        // wie viele Frames schon gehalten
+
     // ── Öffentliche API ───────────────────────────────────────────────────────
 
     public bool IsVisible => _visible;
@@ -126,11 +133,13 @@ public class Keyboard
         }
 
         if ((kDown & NpadButton.A)     != 0) ExecuteKey(_row, _col);
-        if ((kDown & NpadButton.B)     != 0) Backspace();
         if ((kDown & NpadButton.X)     != 0) _shifted = !_shifted;
         if ((kDown & NpadButton.Y)     != 0) Confirm();
         if ((kDown & NpadButton.Plus)  != 0) Confirm();
         if ((kDown & NpadButton.Minus) != 0) Cancel();
+
+        // B-Taste: sofort löschen + Key-Repeat
+        HandleBackspaceRepeat();
     }
 
     public void Draw()
@@ -154,6 +163,53 @@ public class Keyboard
         DrawRow2(Row3Y);
         DrawRow3(Row4Y);
         DrawRow4(Row5Y);
+    }
+
+    // ── Key-Repeat für DEL/Backspace ─────────────────────────────────────────
+    // Logik:
+    //   Frame 0        : B gedrückt → sofort Backspace() (erledigt durch kDown oben — NEIN:
+    //                    kDown wird hier nicht mehr genutzt, wir lesen kHeld)
+    //   Frames 1..29   : warten (RepeatDelay)
+    //   Frame 30+      : alle RepeatInterval Frames ein weiteres Backspace()
+    //
+    // Touch-DEL (Reihe 3, Col 11): gleiche Logik, aber getriggert durch
+    //   _touchOverRow==3 && _touchOverCol==11 anstelle von B-Taste.
+
+    private void HandleBackspaceRepeat()
+    {
+        u64 kHeld = padGetButtons(&g_cs2sx_pad);
+        bool bHeld    = (kHeld & NpadButton.B) != 0;
+        bool delTouch = (_touchOverRow == 3 && _touchOverCol == 11);
+
+        bool wantDel = bHeld || delTouch;
+
+        if (wantDel)
+        {
+            if (!_delHeld)
+            {
+                // Erster Frame: sofort löschen
+                Backspace();
+                _delHeld       = true;
+                _delHoldFrames = 0;
+            }
+            else
+            {
+                _delHoldFrames++;
+                // Nach RepeatDelay: alle RepeatInterval Frames wiederholen
+                if (_delHoldFrames >= RepeatDelay)
+                {
+                    int framesInRepeat = _delHoldFrames - RepeatDelay;
+                    if (framesInRepeat % RepeatInterval == 0)
+                        Backspace();
+                }
+            }
+        }
+        else
+        {
+            // Taste losgelassen → Reset
+            _delHeld       = false;
+            _delHoldFrames = 0;
+        }
     }
 
     // ── Touch-Erkennung (unveränderte Logik) ──────────────────────────────────
@@ -284,7 +340,13 @@ public class Keyboard
 
         if (foundRow != -1 && (foundRow != _lastTouchRow || foundCol != _lastTouchCol))
         {
-            ExecuteKey(foundRow, foundCol);
+            // DEL (Row3/Col11) wird NICHT hier ausgeführt —
+            // HandleBackspaceRepeat() übernimmt das mit Key-Repeat-Logik.
+            // Alle anderen Tasten: normal einmalig auslösen.
+            bool isDel = (foundRow == 3 && foundCol == 11);
+            if (!isDel)
+                ExecuteKey(foundRow, foundCol);
+
             _lastTouchRow = foundRow;
             _lastTouchCol = foundCol;
         }

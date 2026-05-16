@@ -1,0 +1,22 @@
+﻿{
+  "name": "fontSwitch",
+  "author": "Unknown",
+  "version": "1.0.0",
+  "mainClass": "FontSwitchApp",
+  "icon": "icon.jpg",
+  "externLibs": [
+    {
+      "name": "Freetype",
+      "includeDir": "externLibs/freetype/include",
+      "extraIncludeDirs": [
+        "externLibs/freetype"
+      ],
+      "defines": [
+        "FT2_BUILD_LIBRARY"
+      ],
+      "sources": [
+        "externLibs/freetype/freetype_build.c"
+      ]
+    }
+  ]
+}
