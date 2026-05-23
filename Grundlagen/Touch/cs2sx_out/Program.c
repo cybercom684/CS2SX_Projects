@@ -39,3 +39,9 @@ void TouchApp_OnFrame(TouchApp* self)
     Graphics_DrawText(100, 620, "+ zum Beenden", COLOR_GRAY, 1);
 }
 
+void TouchApp_Free(TouchApp* self)
+{
+    if (!self) return;
+    free(self);
+}
+

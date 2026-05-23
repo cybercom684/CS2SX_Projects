@@ -7,6 +7,7 @@ Keyboard* Keyboard_New(void)
     Keyboard* self = (Keyboard*)malloc(sizeof(Keyboard));
     if (!self) return NULL;
     memset(self, 0, sizeof(Keyboard));
+    self->_rc = 1;
     self->f_KeyW = 88;
     self->f_KeyH = 60;
     self->f_KeyGap = 5;
@@ -612,7 +613,15 @@ void Keyboard_ClampCol(Keyboard* self)
 void Keyboard_Free(Keyboard* self)
 {
     if (!self) return;
+    if (--self->_rc > 0) return;
+    if (self->f_buf) { free(self->f_buf); self->f_buf = NULL; }
     free(self);
+}
+
+Keyboard* Keyboard_Retain(Keyboard* self)
+{
+    if (self) self->_rc++;
+    return self;
 }
 
 int Keyboard_get_IsVisible(Keyboard* self)

@@ -6,6 +6,7 @@
 
 struct Keyboard
 {
+    int _rc;
     int f_KeyW;
     int f_KeyH;
     int f_KeyGap;
@@ -94,6 +95,7 @@ int Keyboard_MaxCol(Keyboard* self, int row);
 void Keyboard_ClampCol(Keyboard* self);
 
 void Keyboard_Free(Keyboard* self);
+Keyboard* Keyboard_Retain(Keyboard* self);
 int Keyboard_get_IsVisible(Keyboard* self);
 
 

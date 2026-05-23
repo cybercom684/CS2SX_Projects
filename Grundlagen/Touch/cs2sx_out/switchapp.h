@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <float.h>
+#include <math.h>
 #include "switchforms.h"
+#include "AudioStub.h"
 
 // ============================================================================
 // Farb-Hilfsmakros (RGBA8888)
@@ -19,11 +23,140 @@
 #define COLOR_BLUE    CS2SX_RGB(0,   0,   255)
 #define COLOR_YELLOW  CS2SX_RGB(255, 255, 0  )
 #define COLOR_CYAN    CS2SX_RGB(0,   255, 255)
+// Fix 9: COLOR_MAGENTA war schon definiert, aber Color.Magenta fehlte im TypeRegistry-Mapping
 #define COLOR_MAGENTA CS2SX_RGB(255, 0,   255)
 #define COLOR_GRAY    CS2SX_RGB(128, 128, 128)
 #define COLOR_DGRAY   CS2SX_RGB(64,  64,  64 )
 #define COLOR_LGRAY   CS2SX_RGB(192, 192, 192)
 #define COLOR_ORANGE  CS2SX_RGB(255, 165, 0  )
+
+// Fix 9: Fehlende Farben
+#define COLOR_PINK    CS2SX_RGB(255, 105, 180)
+#define COLOR_PURPLE  CS2SX_RGB(128, 0,   128)
+#define COLOR_BROWN   CS2SX_RGB(139, 69,  19 )
+#define COLOR_TEAL    CS2SX_RGB(0,   128, 128)
+#define COLOR_LIME    CS2SX_RGB(0,   255, 0  )
+#define COLOR_NAVY    CS2SX_RGB(0,   0,   128)
+#define COLOR_SILVER  CS2SX_RGB(192, 192, 192)
+#define COLOR_MAROON  CS2SX_RGB(128, 0,   0  )
+#define COLOR_OLIVE   CS2SX_RGB(128, 128, 0  )
+
+// ============================================================================
+// Fix 2: Math-Hilfsmakros
+// ============================================================================
+
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef CLAMP
+#define CLAMP(v, lo, hi) ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
+#endif
+
+static inline int CS2SX_Sign(int x) { return (x > 0) - (x < 0); }
+
+// ============================================================================
+// String construction helpers (new string(char, count) / new string(char[], start, count))
+// ============================================================================
+
+static inline const char* CS2SX_RepeatChar(char c, int count)
+{
+    if (count <= 0) return "";
+    char* buf = (char*)malloc((size_t)count + 1);
+    if (!buf) return "";
+    memset(buf, (unsigned char)c, (size_t)count);
+    buf[count] = '\0';
+    return buf;
+}
+
+static inline const char* CS2SX_SubstrFromChars(const char* arr, int start, int count)
+{
+    if (!arr || count <= 0) return "";
+    char* buf = (char*)malloc((size_t)count + 1);
+    if (!buf) return "";
+    memcpy(buf, arr + start, (size_t)count);
+    buf[count] = '\0';
+    return buf;
+}
+
+// ============================================================================
+// NULL-safe string comparison (CS2SX_strcmp_safe)
+// ============================================================================
+
+static inline int CS2SX_strcmp_safe(const char* a, const char* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    return strcmp(a, b);
+}
+
+// ============================================================================
+// Fix 3: Pseudo-Zufallszahlengenerator
+// ============================================================================
+
+extern unsigned int _cs2sx_rand_state;
+
+static inline void CS2SX_Rand_Seed(unsigned int seed)
+{
+    _cs2sx_rand_state = seed ? seed : 12345u;
+}
+
+static inline int CS2SX_Rand_Next(int min_val, int max_val)
+{
+    if (max_val <= min_val) return min_val;
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    unsigned int r = (_cs2sx_rand_state >> 16) & 0x7FFFu;
+    return min_val + (int)(r % (unsigned int)(max_val - min_val));
+}
+
+static inline int CS2SX_Rand_NextMax(int max_val)
+{
+    return CS2SX_Rand_Next(0, max_val);
+}
+
+static inline long long CS2SX_Rand_NextInt64(void)
+{
+    // Combine four 15-bit LCG outputs for a ~60-bit random value
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    long long a = (long long)((_cs2sx_rand_state >> 16) & 0x7FFF);
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    long long b = (long long)((_cs2sx_rand_state >> 16) & 0x7FFF);
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    long long c = (long long)((_cs2sx_rand_state >> 16) & 0x7FFF);
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    long long d = (long long)((_cs2sx_rand_state >> 16) & 0x7FFF);
+    return (a << 45) | (b << 30) | (c << 15) | d;
+}
+
+static inline float CS2SX_Rand_Float(void)
+{
+    _cs2sx_rand_state = _cs2sx_rand_state * 1664525u + 1013904223u;
+    return (float)(_cs2sx_rand_state & 0xFFFFu) / 65535.0f;
+}
+
+// ============================================================================
+// Fix 15: Environment.Exit
+// ============================================================================
+
+static inline void Environment_Exit(int code)
+{
+    exit(code);
+}
+
+#define System_Exit(code) Environment_Exit(code)
+
+// ============================================================================
+// Fix 17: Color.WithAlpha
+// ============================================================================
+
+static inline u32 Color_WithAlpha(u32 color, u8 alpha)
+{
+    return (color & 0x00FFFFFFu) | ((u32)alpha << 24);
+}
 
 // ============================================================================
 // SwitchApp
@@ -183,7 +316,7 @@ static inline void Texture_Dispose(Texture* t)
 }
 
 // ============================================================================
-// Framebuffer State — definiert in switchforms.c
+// Framebuffer State
 // ============================================================================
 
 extern Framebuffer g_fb;
@@ -191,9 +324,6 @@ extern u32* g_fb_addr;
 extern int         g_fb_width;
 extern int         g_fb_height;
 extern int         g_gfx_init;
-
-// Fix: g_cs2sx_pad hier deklarieren (definiert in switchforms.c).
-// Muss VOR den inline-Funktionen stehen die es benutzen.
 extern PadState    g_cs2sx_pad;
 
 // ============================================================================
@@ -348,8 +478,7 @@ static inline int Graphics_MeasureTextHeight(int scale)
 }
 
 // ============================================================================
-// Extension Graphics (aus switchapp_ext.h — inline gemerged)
-// Kein separates #include nötig — verhindert "file not found" Fehler.
+// Extension Graphics (merged from switchapp_ext.h)
 // ============================================================================
 
 static inline void Graphics_DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, u32 color)
@@ -485,7 +614,7 @@ static inline void Graphics_DrawGrid(int x, int y, int w, int h, int cellW, int 
 }
 
 // ============================================================================
-// Extension Input — Analog-Sticks & Touch
+// Extension Input
 // ============================================================================
 
 #define CS2SX_STICK_DEADZONE 3000
@@ -511,7 +640,6 @@ static inline CS2SX_StickPos CS2SX_Input_GetStickRight(PadState* pad)
     return pos;
 }
 
-// Globale Wrapper — kein PadState-Parameter nötig aus C#-Code
 static inline CS2SX_StickPos _cs2sx_get_stick_left(void) { return CS2SX_Input_GetStickLeft(&g_cs2sx_pad); }
 static inline CS2SX_StickPos _cs2sx_get_stick_right(void) { return CS2SX_Input_GetStickRight(&g_cs2sx_pad); }
 
@@ -537,61 +665,6 @@ static inline int CS2SX_Touch_HitRect(CS2SX_TouchState* ts, int idx, int rx, int
 {
     if (!ts || idx < 0 || idx >= ts->count) return 0;
     return ts->x[idx] >= rx && ts->x[idx] < rx + rw && ts->y[idx] >= ry && ts->y[idx] < ry + rh;
-}
-
-// ============================================================================
-// Extension Filesystem
-// ============================================================================
-
-static inline List_str* CS2SX_Dir_GetDirectories(const char* path)
-{
-    List_str* result = List_str_New();if (!result)return result;
-    FsFileSystem fs;if (R_FAILED(fsOpenSdCardFileSystem(&fs)))return result;
-    FsDir d;if (R_FAILED(fsFsOpenDirectory(&fs, path, FsDirOpenMode_ReadDirs, &d))) { fsFsClose(&fs);return result; }
-    static FsDirectoryEntry _subdir_entries[64];static char _subdir_paths[64][512];
-    s64 count = 0;fsDirRead(&d, &count, 64, _subdir_entries);
-    for (int i = 0;i < (int)count && i < 64;i++) { snprintf(_subdir_paths[i], sizeof(_subdir_paths[i]), "%s/%s", path, _subdir_entries[i].name);List_str_Add(result, _subdir_paths[i]); }
-    fsDirClose(&d);fsFsClose(&fs);return result;
-}
-
-static inline List_str* CS2SX_Dir_GetEntries(const char* path)
-{
-    List_str* result = List_str_New();if (!result)return result;
-    FsFileSystem fs;if (R_FAILED(fsOpenSdCardFileSystem(&fs)))return result;
-    FsDir d;int mode = FsDirOpenMode_ReadFiles | FsDirOpenMode_ReadDirs;
-    if (R_FAILED(fsFsOpenDirectory(&fs, path, mode, &d))) { fsFsClose(&fs);return result; }
-    static FsDirectoryEntry _all_entries[128];static char _all_paths[128][512];
-    s64 count = 0;fsDirRead(&d, &count, 128, _all_entries);
-    for (int i = 0;i < (int)count && i < 128;i++) { snprintf(_all_paths[i], sizeof(_all_paths[i]), "%s/%s", path, _all_entries[i].name);List_str_Add(result, _all_paths[i]); }
-    fsDirClose(&d);fsFsClose(&fs);return result;
-}
-
-static inline const char* CS2SX_Path_GetFileName(const char* path)
-{
-    if (!path)return"";const char* last = path;
-    for (const char* p = path;*p;p++) if (*p == '/')last = p + 1;
-    return last;
-}
-
-static inline const char* CS2SX_Path_GetExtension(const char* path)
-{
-    const char* name = CS2SX_Path_GetFileName(path);const char* dot = NULL;
-    for (const char* p = name;*p;p++) if (*p == '.')dot = p;
-    return dot ? dot : "";
-}
-
-static inline const char* CS2SX_Path_GetDirectoryName(const char* path)
-{
-    static char _dirname_buf[512];if (!path)return"";
-    int len = (int)strlen(path), slash = -1;
-    for (int i = len - 1;i >= 0;i--) if (path[i] == '/') { slash = i;break; }
-    if (slash <= 0)return"/";int copyLen = slash;if (copyLen >= 512)copyLen = 511;
-    memcpy(_dirname_buf, path, copyLen);_dirname_buf[copyLen] = '\0';return _dirname_buf;
-}
-
-static inline int CS2SX_Path_IsDirectory(const char* path)
-{
-    return CS2SX_Path_GetExtension(path)[0] == '\0';
 }
 
 // ============================================================================
@@ -625,20 +698,23 @@ static inline void SwitchApp_Run(SwitchApp* self)
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad);
 
-    NWindow* win = nwindowGetDefault();
-    framebufferCreate(&g_fb, win,
-        (u32)g_fb_width, (u32)g_fb_height,
-        PIXEL_FORMAT_RGBA_8888, 2);
-    framebufferMakeLinear(&g_fb);
-
+    // OnInit first: lets the user call Graphics.Init() to set g_fb_width/g_fb_height
+    // before framebufferCreate, so the buffer is allocated at the correct size.
     if (self->OnInit)
         self->OnInit(self);
 
     int use_gfx = g_gfx_init;
 
-    if (!use_gfx)
+    if (use_gfx)
     {
-        framebufferClose(&g_fb);
+        NWindow* win = nwindowGetDefault();
+        framebufferCreate(&g_fb, win,
+            (u32)g_fb_width, (u32)g_fb_height,
+            PIXEL_FORMAT_RGBA_8888, 2);
+        framebufferMakeLinear(&g_fb);
+    }
+    else
+    {
         consoleInit(NULL);
         Form_InitFocus(&self->form);
     }
@@ -646,7 +722,6 @@ static inline void SwitchApp_Run(SwitchApp* self)
     while (appletMainLoop())
     {
         padUpdate(&pad);
-        // Fix: g_cs2sx_pad befüllen damit _cs2sx_get_stick_left/right() funktionieren
         g_cs2sx_pad = pad;
         self->kDown = padGetButtonsDown(&pad);
         self->kHeld = padGetButtons(&pad);

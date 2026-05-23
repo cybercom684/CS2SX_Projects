@@ -60,6 +60,61 @@
 static inline int CS2SX_Sign(int x) { return (x > 0) - (x < 0); }
 
 // ============================================================================
+// String construction helpers (new string(char, count) / new string(char[], start, count))
+// ============================================================================
+
+static inline const char* CS2SX_RepeatChar(char c, int count)
+{
+    char* buf = _cs2sx_next_buf();
+    if (count <= 0) { buf[0] = '\0'; return buf; }
+    int n = count < CS2SX_STRBUF_SIZE - 1 ? count : CS2SX_STRBUF_SIZE - 1;
+    memset(buf, (unsigned char)c, (size_t)n);
+    buf[n] = '\0';
+    return buf;
+}
+
+static inline const char* CS2SX_SubstrFromChars(const char* arr, int start, int count)
+{
+    char* buf = _cs2sx_next_buf();
+    if (!arr || count <= 0) { buf[0] = '\0'; return buf; }
+    int n = count < CS2SX_STRBUF_SIZE - 1 ? count : CS2SX_STRBUF_SIZE - 1;
+    memcpy(buf, arr + start, (size_t)n);
+    buf[n] = '\0';
+    return buf;
+}
+
+// ============================================================================
+// NULL-safe string comparison (CS2SX_strcmp_safe)
+// ============================================================================
+
+static inline int CS2SX_strcmp_safe(const char* a, const char* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    return strcmp(a, b);
+}
+
+static inline int String_CompareIgnoreCase(const char* a, const char* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    return strcasecmp(a, b);
+}
+
+// ============================================================================
+// String_IsNullOrWhiteSpace — NULL + leer + nur Whitespace
+// ============================================================================
+
+static inline int String_IsNullOrWhiteSpace(const char* s) {
+    if (!s) return 1;
+    while (*s) {
+        if ((unsigned char)*s > 0x20) return 0;
+        s++;
+    }
+    return 1;
+}
+
+// ============================================================================
 // Fix 3: Pseudo-Zufallszahlengenerator
 // ============================================================================
 
@@ -618,7 +673,7 @@ static inline int CS2SX_StickNorm(int raw)
 
 static inline CS2SX_TouchState CS2SX_Input_GetTouch(void)
 {
-    CS2SX_TouchState state;state.count = 0;
+    CS2SX_TouchState state = {0};
     HidTouchScreenState raw = { 0 };
     if (hidGetTouchScreenStates(&raw, 1) == 0) return state;
     int count = raw.count;if (count > 10)count = 10;state.count = count;
@@ -663,26 +718,30 @@ static inline void SwitchApp_Run(SwitchApp* self)
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad);
 
-    NWindow* win = nwindowGetDefault();
-    framebufferCreate(&g_fb, win,
-        (u32)g_fb_width, (u32)g_fb_height,
-        PIXEL_FORMAT_RGBA_8888, 2);
-    framebufferMakeLinear(&g_fb);
-
+    // OnInit first: lets the user call Graphics.Init() to set g_fb_width/g_fb_height
+    // before framebufferCreate, so the buffer is allocated at the correct size.
     if (self->OnInit)
         self->OnInit(self);
 
     int use_gfx = g_gfx_init;
 
-    if (!use_gfx)
+    if (use_gfx)
     {
-        framebufferClose(&g_fb);
+        NWindow* win = nwindowGetDefault();
+        framebufferCreate(&g_fb, win,
+            (u32)g_fb_width, (u32)g_fb_height,
+            PIXEL_FORMAT_RGBA_8888, 2);
+        framebufferMakeLinear(&g_fb);
+    }
+    else
+    {
         consoleInit(NULL);
         Form_InitFocus(&self->form);
     }
 
     while (appletMainLoop())
     {
+        cs2sx_frame_begin();
         padUpdate(&pad);
         g_cs2sx_pad = pad;
         self->kDown = padGetButtonsDown(&pad);

@@ -1,0 +1,7 @@
+{
+    "name": "textEditor",
+    "author": "Unknown",
+    "version": "1.0.0",
+    "mainClass": "textEditorApp",
+    "icon": "icon.jpg"
+}
