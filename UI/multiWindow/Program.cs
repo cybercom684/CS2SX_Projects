@@ -10,6 +10,11 @@ public class multiWindowApp : SwitchApp
         Graphics.Init(1280, 720);
         _desktop = new Desktop();
 
+        _desktop.ContextMenu.AddItem("Editor oeffnen", () => OpenEditor());
+        _desktop.ContextMenu.AddItem("Statistiken", () => OpenStats());
+        _desktop.ContextMenu.AddItem("Einstellungen", () => OpenSettings());
+        _desktop.ContextMenu.AddItem("Fenster schliessen", () => { /* optional */ });
+
         // ── Fenster 1: Info-Fenster ───────────────────────────────────────────
         Window winInfo = new Window();
         winInfo.Title  = "Info";
