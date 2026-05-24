@@ -1,0 +1,7 @@
+{
+    "name": "multiWindow",
+    "author": "Unknown",
+    "version": "1.0.0",
+    "mainClass": "multiWindowApp",
+    "icon": "icon.jpg"
+}
