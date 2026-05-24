@@ -9,8 +9,8 @@ int          g_gfx_init      = 0;
 PadState     g_cs2sx_pad;
 unsigned int _cs2sx_rand_state = 12345u;
 
-char _cs2sx_strpool[32][1024];
-int  _cs2sx_strpool_idx = 0;
+char   _cs2sx_arena[CS2SX_ARENA_SIZE];
+size_t _cs2sx_arena_pos = 0;
 
 // Audio state (extern in AudioStub.h)
 int               _cs2sx_audio_init      = 0;

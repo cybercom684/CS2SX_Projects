@@ -9,13 +9,14 @@ struct TouchApp
     SwitchApp base;
     int f_touchX;
     int f_touchY;
-    bool f_touching;
+    int f_touching;
 };
 
 void TouchApp_Init(TouchApp* self);
 void TouchApp_OnInit(TouchApp* self);
 void TouchApp_OnFrame(TouchApp* self);
 
+void TouchApp_Free(TouchApp* self);
 
 
 #endif

@@ -31,7 +31,7 @@ void keyboardApp_OnFrame(keyboardApp* self)
 void keyboardApp_Free(keyboardApp* self)
 {
     if (!self) return;
-    if (self->f_keyboard) Keyboard_Free(self->f_keyboard);
+    if (self->f_keyboard) { Keyboard_Free(self->f_keyboard); self->f_keyboard = NULL; }
     free(self);
 }
 

@@ -3,30 +3,41 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdbool.h>
 #include <ctype.h>
 
 extern char _cs2sx_strbuf[1024];
 
 // ============================================================================
-// String-Buffer-Pool
-// FIX: Pool-Slots von 8 auf 32 erhöht. Außerdem: _cs2sx_next_buf_heap()
-// für Funktionen die viele Strings auf einmal zurückgeben (Split, ReadAllLines)
-// — diese allozieren eigene Heap-Kopien statt Pool-Slots zu verbrauchen.
+// Per-Frame String Arena
+//
+// Replaces the 64-slot ring buffer with a flat bump-pointer arena.
+// cs2sx_frame_begin() resets the arena at the start of every game-loop frame;
+// all string temporaries are valid until the next frame begins.
+// Capacity: CS2SX_ARENA_SIZE bytes per frame (default 512 KB).
+// Each _cs2sx_next_buf() call hands out CS2SX_STRBUF_SIZE bytes, 8-byte aligned.
+// If the arena fills within a single frame the allocator wraps (same behaviour
+// as the old ring-buffer overflow — silent wrap rather than a crash).
 // ============================================================================
 
-#define CS2SX_STRBUF_SLOTS 32
 #define CS2SX_STRBUF_SIZE  1024
+#define CS2SX_ARENA_SIZE   (512 * 1024)
 
-// FIX: Pool-State als extern — Definition liegt in switchforms.c (ODR-sicher)
-extern char   _cs2sx_strpool[CS2SX_STRBUF_SLOTS][CS2SX_STRBUF_SIZE];
-extern int    _cs2sx_strpool_idx;
+extern char   _cs2sx_arena[CS2SX_ARENA_SIZE];
+extern size_t _cs2sx_arena_pos;
+
+static inline void cs2sx_frame_begin(void)
+{
+    _cs2sx_arena_pos = 0;
+}
 
 static inline char* _cs2sx_next_buf(void)
 {
-    char* buf = _cs2sx_strpool[_cs2sx_strpool_idx];
-    _cs2sx_strpool_idx = (_cs2sx_strpool_idx + 1) % CS2SX_STRBUF_SLOTS;
-    return buf;
+    size_t pos = (_cs2sx_arena_pos + 7u) & ~(size_t)7u;
+    if (pos + CS2SX_STRBUF_SIZE > CS2SX_ARENA_SIZE) pos = 0;
+    _cs2sx_arena_pos = pos + CS2SX_STRBUF_SIZE;
+    return _cs2sx_arena + pos;
 }
 
 // FIX: Heap-String für lange Lebensdauer (Liste von Strings etc.)
@@ -887,6 +898,47 @@ static inline void List_##T##_Sort(List_##T* l) {                               
         while (_j >= 0 && l->data[_j] > _key) { l->data[_j+1] = l->data[_j]; _j--; }             \
         l->data[_j+1] = _key; } }
 
+// ── List<T> für Pointer-Typen (User-Klassen) ─────────────────────────────────
+// CS2SX_LIST_DEFINE_PTR(T) erzeugt List_T mit T*-Elementen (heap-allozierte Objekte).
+// Wird von _generics.h für jede List<UserClass>-Nutzung emittiert.
+// Free gibt nur den Container frei, nicht die Elemente selbst.
+#define CS2SX_LIST_DEFINE_PTR(T)                                                                    \
+typedef struct { T** data; int count; int capacity; } List_##T;                                     \
+static inline List_##T* List_##T##_New(void) {                                                      \
+    List_##T* l = (List_##T*)malloc(sizeof(List_##T));                                              \
+    if (!l) return NULL;                                                                            \
+    l->data = (T**)malloc(CS2SX_LIST_INITIAL_CAP * sizeof(T*));                                    \
+    l->count = 0; l->capacity = CS2SX_LIST_INITIAL_CAP; return l; }                                \
+static inline void List_##T##_Add(List_##T* l, T* val) {                                           \
+    if (!l) return;                                                                                 \
+    if (l->count >= l->capacity) {                                                                  \
+        l->capacity *= 2;                                                                           \
+        l->data = (T**)realloc(l->data, l->capacity * sizeof(T*)); }                               \
+    l->data[l->count++] = val; }                                                                    \
+static inline T*   List_##T##_Get(List_##T* l, int i) { return (l && i >= 0 && i < l->count) ? l->data[i] : NULL; } \
+static inline int  List_##T##_Count(List_##T* l)       { return l ? l->count : 0; }                \
+static inline void List_##T##_Clear(List_##T* l)       { if (l) l->count = 0; }                    \
+static inline void List_##T##_Free(List_##T* l)        { if (l) { free(l->data); free(l); } }      \
+static inline int  List_##T##_Contains(List_##T* l, T* val) {                                      \
+    if (!l) return 0;                                                                               \
+    for (int _i = 0; _i < l->count; _i++) { if (l->data[_i] == val) return 1; } return 0; }       \
+static inline int  List_##T##_IndexOf(List_##T* l, T* val) {                                       \
+    if (!l) return -1;                                                                              \
+    for (int _i = 0; _i < l->count; _i++) { if (l->data[_i] == val) return _i; } return -1; }     \
+static inline void List_##T##_Remove(List_##T* l, int idx) {                                       \
+    if (!l || idx < 0 || idx >= l->count) return;                                                  \
+    for (int _i = idx; _i < l->count - 1; _i++) l->data[_i] = l->data[_i + 1];                   \
+    l->count--; }                                                                                   \
+static inline void List_##T##_RemoveValue(List_##T* l, T* val) {                                   \
+    if (!l) return;                                                                                 \
+    for (int _i = 0; _i < l->count; _i++) {                                                        \
+        if (l->data[_i] == val) { List_##T##_Remove(l, _i); return; } } }                         \
+static inline void List_##T##_Reverse(List_##T* l) {                                               \
+    if (!l || l->count < 2) return;                                                                 \
+    int _lo = 0, _hi = l->count - 1;                                                               \
+    while (_lo < _hi) { T* _t = l->data[_lo]; l->data[_lo] = l->data[_hi];                        \
+        l->data[_hi] = _t; _lo++; _hi--; } }
+
 CS2SX_LIST_DEFINE(int)
 CS2SX_LIST_DEFINE(float)
 CS2SX_LIST_DEFINE(double)
@@ -896,6 +948,125 @@ CS2SX_LIST_DEFINE(u32)
 CS2SX_LIST_DEFINE(u64)
 CS2SX_LIST_DEFINE(s32)
 CS2SX_LIST_DEFINE(s64)
+
+// ============================================================================
+// Stack<T> — LIFO using growable array
+// ============================================================================
+
+#define CS2SX_STACK_DEFINE(T)                                                                       \
+typedef struct { T* data; int count; int capacity; } Stack_##T;                                     \
+static inline Stack_##T* Stack_##T##_New(void) {                                                    \
+    Stack_##T* s = (Stack_##T*)malloc(sizeof(Stack_##T));                                           \
+    if (!s) return NULL;                                                                             \
+    s->data = (T*)malloc(8 * sizeof(T)); s->count = 0; s->capacity = 8; return s; }                \
+static inline void Stack_##T##_Push(Stack_##T* s, T val) {                                         \
+    if (!s) return;                                                                                  \
+    if (s->count >= s->capacity) {                                                                   \
+        s->capacity *= 2;                                                                            \
+        s->data = (T*)realloc(s->data, s->capacity * sizeof(T)); }                                  \
+    s->data[s->count++] = val; }                                                                    \
+static inline T Stack_##T##_Pop(Stack_##T* s) {                                                     \
+    if (!s || s->count == 0) { T _z; memset(&_z,0,sizeof(T)); return _z; }                         \
+    return s->data[--s->count]; }                                                                    \
+static inline T Stack_##T##_Peek(Stack_##T* s) {                                                    \
+    if (!s || s->count == 0) { T _z; memset(&_z,0,sizeof(T)); return _z; }                         \
+    return s->data[s->count - 1]; }                                                                  \
+static inline void Stack_##T##_Clear(Stack_##T* s) { if (s) s->count = 0; }                        \
+static inline void Stack_##T##_Free(Stack_##T* s) { if (s) { free(s->data); free(s); } }
+
+CS2SX_STACK_DEFINE(int)
+CS2SX_STACK_DEFINE(float)
+CS2SX_STACK_DEFINE(double)
+
+// ============================================================================
+// Queue<T> — FIFO using circular buffer
+// ============================================================================
+
+#define CS2SX_QUEUE_DEFINE(T)                                                                       \
+typedef struct { T* data; int head; int tail; int count; int capacity; } Queue_##T;                 \
+static inline Queue_##T* Queue_##T##_New(void) {                                                    \
+    Queue_##T* q = (Queue_##T*)malloc(sizeof(Queue_##T));                                           \
+    if (!q) return NULL;                                                                             \
+    q->data = (T*)malloc(8 * sizeof(T));                                                             \
+    q->head = 0; q->tail = 0; q->count = 0; q->capacity = 8; return q; }                           \
+static inline void Queue_##T##_Enqueue(Queue_##T* q, T val) {                                       \
+    if (!q) return;                                                                                   \
+    if (q->count >= q->capacity) {                                                                    \
+        int nc = q->capacity * 2;                                                                     \
+        T* nd = (T*)malloc(nc * sizeof(T));                                                           \
+        for (int _i = 0; _i < q->count; _i++)                                                        \
+            nd[_i] = q->data[(q->head + _i) % q->capacity];                                          \
+        free(q->data); q->data = nd; q->head = 0; q->tail = q->count; q->capacity = nc; }            \
+    q->data[q->tail] = val; q->tail = (q->tail + 1) % q->capacity; q->count++; }                   \
+static inline T Queue_##T##_Dequeue(Queue_##T* q) {                                                  \
+    if (!q || q->count == 0) { T _z; memset(&_z,0,sizeof(T)); return _z; }                          \
+    T val = q->data[q->head]; q->head = (q->head + 1) % q->capacity; q->count--; return val; }      \
+static inline T Queue_##T##_Peek(Queue_##T* q) {                                                     \
+    if (!q || q->count == 0) { T _z; memset(&_z,0,sizeof(T)); return _z; }                          \
+    return q->data[q->head]; }                                                                        \
+static inline void Queue_##T##_Clear(Queue_##T* q) {                                                 \
+    if (q) { q->head = 0; q->tail = 0; q->count = 0; } }                                             \
+static inline void Queue_##T##_Free(Queue_##T* q) { if (q) { free(q->data); free(q); } }
+
+CS2SX_QUEUE_DEFINE(int)
+CS2SX_QUEUE_DEFINE(float)
+CS2SX_QUEUE_DEFINE(double)
+
+// ============================================================================
+// HashSet<T> — sorted unique array (suitable for small-to-medium sets)
+// ============================================================================
+
+#define CS2SX_HASHSET_DEFINE(T)                                                                     \
+typedef struct { T* data; int count; int capacity; } HashSet_##T;                                   \
+static inline HashSet_##T* HashSet_##T##_New(void) {                                                \
+    HashSet_##T* s = (HashSet_##T*)malloc(sizeof(HashSet_##T));                                     \
+    if (!s) return NULL;                                                                              \
+    s->data = (T*)malloc(8 * sizeof(T)); s->count = 0; s->capacity = 8; return s; }                \
+static inline int HashSet_##T##_Contains(HashSet_##T* s, T val) {                                   \
+    if (!s) return 0;                                                                                 \
+    for (int _i = 0; _i < s->count; _i++) if (s->data[_i] == val) return 1; return 0; }            \
+static inline int HashSet_##T##_Add(HashSet_##T* s, T val) {                                        \
+    if (!s || HashSet_##T##_Contains(s, val)) return 0;                                              \
+    if (s->count >= s->capacity) {                                                                    \
+        s->capacity *= 2;                                                                             \
+        s->data = (T*)realloc(s->data, s->capacity * sizeof(T)); }                                   \
+    s->data[s->count++] = val; return 1; }                                                           \
+static inline int HashSet_##T##_Remove(HashSet_##T* s, T val) {                                     \
+    if (!s) return 0;                                                                                 \
+    for (int _i = 0; _i < s->count; _i++) if (s->data[_i] == val) {                                 \
+        for (int _j = _i; _j < s->count-1; _j++) s->data[_j] = s->data[_j+1];                      \
+        s->count--; return 1; } return 0; }                                                           \
+static inline void HashSet_##T##_Clear(HashSet_##T* s) { if (s) s->count = 0; }                    \
+static inline void HashSet_##T##_Free(HashSet_##T* s) { if (s) { free(s->data); free(s); } }      \
+static inline void HashSet_##T##_UnionWith(HashSet_##T* dst, HashSet_##T* src) {                   \
+    if (!dst || !src) return;                                                                        \
+    for (int _i = 0; _i < src->count; _i++) HashSet_##T##_Add(dst, src->data[_i]); }               \
+static inline void HashSet_##T##_IntersectWith(HashSet_##T* dst, HashSet_##T* src) {               \
+    if (!dst || !src) return;                                                                        \
+    int _n = 0;                                                                                      \
+    for (int _i = 0; _i < dst->count; _i++)                                                         \
+        if (HashSet_##T##_Contains(src, dst->data[_i])) dst->data[_n++] = dst->data[_i];           \
+    dst->count = _n; }                                                                               \
+static inline void HashSet_##T##_ExceptWith(HashSet_##T* dst, HashSet_##T* src) {                  \
+    if (!dst || !src) return;                                                                        \
+    for (int _i = 0; _i < src->count; _i++) HashSet_##T##_Remove(dst, src->data[_i]); }
+
+CS2SX_HASHSET_DEFINE(int)
+CS2SX_HASHSET_DEFINE(float)
+
+// ── qsort comparison helpers (used by Array.Sort transpilation) ───────────────
+static inline int _cs2sx_cmp_int(const void* a, const void* b)
+{ return (*(const int*)a > *(const int*)b) - (*(const int*)a < *(const int*)b); }
+static inline int _cs2sx_cmp_uint(const void* a, const void* b)
+{ return (*(const unsigned int*)a > *(const unsigned int*)b) - (*(const unsigned int*)a < *(const unsigned int*)b); }
+static inline int _cs2sx_cmp_long(const void* a, const void* b)
+{ return (*(const long long*)a > *(const long long*)b) - (*(const long long*)a < *(const long long*)b); }
+static inline int _cs2sx_cmp_float(const void* a, const void* b)
+{ return (*(const float*)a > *(const float*)b) - (*(const float*)a < *(const float*)b); }
+static inline int _cs2sx_cmp_double(const void* a, const void* b)
+{ return (*(const double*)a > *(const double*)b) - (*(const double*)a < *(const double*)b); }
+static inline int _cs2sx_cmp_str(const void* a, const void* b)
+{ return strcmp(*(const char* const*)a, *(const char* const*)b); }
 
 // ── List<string> ─────────────────────────────────────────────────────────────
 // FIX: List_str speichert Heap-Kopien der Strings statt Pool-Pointer.
@@ -927,6 +1098,10 @@ static inline void List_str_Add(List_str* l, const char* val)
 
 static inline const char* List_str_Get(List_str* l, int i) { return l->data[i]; }
 static inline int          List_str_Count(List_str* l) { return l ? l->count : 0; }
+static inline void         List_str_Set(List_str* l, int i, const char* val) {
+    if (!l || i < 0 || i >= l->count) return;
+    free(l->data[i]);
+    l->data[i] = val ? _cs2sx_heap_strdup(val) : NULL; }
 
 static inline void List_str_Clear(List_str* l)
 {
@@ -1046,6 +1221,19 @@ static inline List_str* String_Split(const char* s, const char* sep)
         cur = found + seplen;
     }
     free(src);
+    return result;
+}
+
+// StringSplitOptions.RemoveEmptyEntries-Variante
+static inline List_str* String_Split_RemoveEmpty(const char* s, const char* sep)
+{
+    List_str* raw = String_Split(s, sep);
+    if (!raw) return List_str_New();
+    List_str* result = List_str_New();
+    for (int _i = 0; _i < raw->count; _i++)
+        if (raw->data[_i] && raw->data[_i][0] != '\0')
+            List_str_Add(result, raw->data[_i]);
+    List_str_Free(raw);
     return result;
 }
 
@@ -1562,6 +1750,48 @@ static inline int CS2SX_Path_IsDirectory(const char* path)
     return CS2SX_Path_GetExtension(path)[0] == '\0';
 }
 
+static inline const char* CS2SX_Path_GetFileNameWithoutExt(const char* path)
+{
+    char* buf = _cs2sx_next_buf();
+    const char* fname = CS2SX_Path_GetFileName(path);
+    strncpy(buf, fname, CS2SX_STRBUF_SIZE - 1);
+    buf[CS2SX_STRBUF_SIZE - 1] = '\0';
+    char* dot = NULL;
+    for (char* p = buf; *p; p++)
+        if (*p == '.') dot = p;
+    if (dot) *dot = '\0';
+    return buf;
+}
+
+static inline int CS2SX_Path_IsPathRooted(const char* path)
+{
+    if (!path || !path[0]) return 0;
+    return path[0] == '/' || path[0] == '\\';
+}
+
+static inline const char* CS2SX_Path_ChangeExtension(const char* path, const char* ext)
+{
+    char* buf = _cs2sx_next_buf();
+    if (!path) { buf[0] = '\0'; return buf; }
+    char base[CS2SX_STRBUF_SIZE];
+    strncpy(base, path, CS2SX_STRBUF_SIZE - 1);
+    base[CS2SX_STRBUF_SIZE - 1] = '\0';
+    char* dot = NULL;
+    for (char* p = base; *p; p++)
+        if (*p == '.') dot = p;
+    if (dot) *dot = '\0';
+    if (ext && ext[0]) {
+        if (ext[0] != '.')
+            snprintf(buf, CS2SX_STRBUF_SIZE, "%s.%s", base, ext);
+        else
+            snprintf(buf, CS2SX_STRBUF_SIZE, "%s%s", base, ext);
+    } else {
+        strncpy(buf, base, CS2SX_STRBUF_SIZE - 1);
+        buf[CS2SX_STRBUF_SIZE - 1] = '\0';
+    }
+    return buf;
+}
+
 static inline int String_LastIndexOfChar(const char* s, char c)
 {
     if (!s) return -1;
@@ -1660,6 +1890,263 @@ static inline void Form_Free(Form* form)
     for (int i = 0; i < form->count; i++) { free(form->controls[i]); form->controls[i] = NULL; }
     form->count = 0;
     form->focusedIndex = -1;
+}
+
+// ============================================================================
+// DateTime — wraps localtime() for basic date/time access
+// ============================================================================
+
+#include <time.h>
+
+static inline struct tm* _cs2sx_now(void)
+{
+    time_t t = time(NULL);
+    return localtime(&t);
+}
+
+#define CS2SX_DateTime_Now_Year()       (_cs2sx_now()->tm_year + 1900)
+#define CS2SX_DateTime_Now_Month()      (_cs2sx_now()->tm_mon  + 1)
+#define CS2SX_DateTime_Now_Day()        _cs2sx_now()->tm_mday
+#define CS2SX_DateTime_Now_Hour()       _cs2sx_now()->tm_hour
+#define CS2SX_DateTime_Now_Minute()     _cs2sx_now()->tm_min
+#define CS2SX_DateTime_Now_Second()     _cs2sx_now()->tm_sec
+#define CS2SX_DateTime_Now_DayOfWeek()  _cs2sx_now()->tm_wday
+#define CS2SX_DateTime_Now_DayOfYear()  _cs2sx_now()->tm_yday
+#define CS2SX_DateTime_Now_Ticks()      ((long long)armGetSystemTick())
+
+// ============================================================================
+// Stopwatch — high-precision timer using armGetSystemTick()
+// ============================================================================
+
+typedef struct CS2SX_Stopwatch CS2SX_Stopwatch;
+struct CS2SX_Stopwatch
+{
+    uint64_t start;
+    uint64_t accumulated;
+    bool     running;
+};
+
+static inline CS2SX_Stopwatch* CS2SX_Stopwatch_New(void)
+{
+    CS2SX_Stopwatch* sw = (CS2SX_Stopwatch*)malloc(sizeof(CS2SX_Stopwatch));
+    if (!sw) return NULL;
+    memset(sw, 0, sizeof(CS2SX_Stopwatch));
+    return sw;
+}
+
+static inline CS2SX_Stopwatch* CS2SX_Stopwatch_StartNew(void)
+{
+    CS2SX_Stopwatch* sw = CS2SX_Stopwatch_New();
+    if (!sw) return NULL;
+    sw->start   = armGetSystemTick();
+    sw->running = true;
+    return sw;
+}
+
+static inline void CS2SX_Stopwatch_Start(CS2SX_Stopwatch* sw)
+{
+    if (!sw || sw->running) return;
+    sw->start   = armGetSystemTick();
+    sw->running = true;
+}
+
+static inline void CS2SX_Stopwatch_Stop(CS2SX_Stopwatch* sw)
+{
+    if (!sw || !sw->running) return;
+    sw->accumulated += armGetSystemTick() - sw->start;
+    sw->running      = false;
+}
+
+static inline void CS2SX_Stopwatch_Reset(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return;
+    sw->accumulated = 0;
+    sw->start       = 0;
+    sw->running     = false;
+}
+
+static inline void CS2SX_Stopwatch_Restart(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return;
+    sw->accumulated = 0;
+    sw->start       = armGetSystemTick();
+    sw->running     = true;
+}
+
+static inline long long CS2SX_Stopwatch_ElapsedMs(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return 0;
+    uint64_t ticks = sw->accumulated + (sw->running ? armGetSystemTick() - sw->start : 0);
+    return (long long)(armTicksToNs(ticks) / 1000000ULL);
+}
+
+static inline double CS2SX_Stopwatch_ElapsedMsDouble(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return 0.0;
+    uint64_t ticks = sw->accumulated + (sw->running ? armGetSystemTick() - sw->start : 0);
+    return (double)armTicksToNs(ticks) / 1000000.0;
+}
+
+static inline double CS2SX_Stopwatch_ElapsedSecDouble(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return 0.0;
+    uint64_t ticks = sw->accumulated + (sw->running ? armGetSystemTick() - sw->start : 0);
+    return (double)armTicksToNs(ticks) / 1000000000.0;
+}
+
+static inline long long CS2SX_Stopwatch_ElapsedTicks(CS2SX_Stopwatch* sw)
+{
+    if (!sw) return 0;
+    uint64_t ticks = sw->accumulated + (sw->running ? armGetSystemTick() - sw->start : 0);
+    return (long long)ticks;
+}
+
+static inline void CS2SX_Stopwatch_Free(CS2SX_Stopwatch* sw) { free(sw); }
+
+// ── TimeSpan ──────────────────────────────────────────────────────────────────
+// Represents a duration in 100-nanosecond ticks (same as .NET TimeSpan.Ticks).
+// DateTime subtraction produces a TimeSpan; Stopwatch.Elapsed returns one too.
+
+typedef struct { long long ticks; } CS2SX_TimeSpan;
+
+#define CS2SX_TICKS_PER_MS       10000LL
+#define CS2SX_TICKS_PER_SEC   10000000LL
+#define CS2SX_TICKS_PER_MIN  600000000LL
+#define CS2SX_TICKS_PER_HOUR 36000000000LL
+#define CS2SX_TICKS_PER_DAY  864000000000LL
+
+static inline CS2SX_TimeSpan CS2SX_TimeSpan_FromMs(double ms)
+{ CS2SX_TimeSpan ts; ts.ticks = (long long)(ms * CS2SX_TICKS_PER_MS); return ts; }
+static inline CS2SX_TimeSpan CS2SX_TimeSpan_FromSec(double s)
+{ CS2SX_TimeSpan ts; ts.ticks = (long long)(s  * CS2SX_TICKS_PER_SEC); return ts; }
+static inline CS2SX_TimeSpan CS2SX_TimeSpan_FromTicks(long long t)
+{ CS2SX_TimeSpan ts; ts.ticks = t; return ts; }
+
+static inline double CS2SX_TimeSpan_TotalMs(CS2SX_TimeSpan ts)
+{ return (double)ts.ticks / CS2SX_TICKS_PER_MS; }
+static inline double CS2SX_TimeSpan_TotalSec(CS2SX_TimeSpan ts)
+{ return (double)ts.ticks / CS2SX_TICKS_PER_SEC; }
+static inline double CS2SX_TimeSpan_TotalMin(CS2SX_TimeSpan ts)
+{ return (double)ts.ticks / CS2SX_TICKS_PER_MIN; }
+static inline double CS2SX_TimeSpan_TotalHours(CS2SX_TimeSpan ts)
+{ return (double)ts.ticks / CS2SX_TICKS_PER_HOUR; }
+static inline double CS2SX_TimeSpan_TotalDays(CS2SX_TimeSpan ts)
+{ return (double)ts.ticks / CS2SX_TICKS_PER_DAY; }
+static inline int    CS2SX_TimeSpan_Milliseconds(CS2SX_TimeSpan ts)
+{ return (int)((ts.ticks / CS2SX_TICKS_PER_MS) % 1000); }
+static inline int    CS2SX_TimeSpan_Seconds(CS2SX_TimeSpan ts)
+{ return (int)((ts.ticks / CS2SX_TICKS_PER_SEC) % 60); }
+static inline int    CS2SX_TimeSpan_Minutes(CS2SX_TimeSpan ts)
+{ return (int)((ts.ticks / CS2SX_TICKS_PER_MIN) % 60); }
+static inline int    CS2SX_TimeSpan_Hours(CS2SX_TimeSpan ts)
+{ return (int)((ts.ticks / CS2SX_TICKS_PER_HOUR) % 24); }
+static inline int    CS2SX_TimeSpan_Days(CS2SX_TimeSpan ts)
+{ return (int)(ts.ticks  / CS2SX_TICKS_PER_DAY); }
+
+// DateTime - DateTime = TimeSpan (using time_t seconds, 1-second resolution)
+static inline CS2SX_TimeSpan CS2SX_DateTime_Subtract(time_t a, time_t b)
+{ CS2SX_TimeSpan ts; ts.ticks = (long long)(difftime(a, b) * CS2SX_TICKS_PER_SEC); return ts; }
+
+// TimeSpan arithmetic
+static inline CS2SX_TimeSpan CS2SX_TimeSpan_Add(CS2SX_TimeSpan a, CS2SX_TimeSpan b)
+{ CS2SX_TimeSpan r; r.ticks = a.ticks + b.ticks; return r; }
+static inline CS2SX_TimeSpan CS2SX_TimeSpan_Sub(CS2SX_TimeSpan a, CS2SX_TimeSpan b)
+{ CS2SX_TimeSpan r; r.ticks = a.ticks - b.ticks; return r; }
+
+// ── Regex (wraps POSIX regex.h) ───────────────────────────────────────────────
+typedef struct { char pattern[256]; } CS2SX_Regex;
+static inline CS2SX_Regex* CS2SX_Regex_New(const char* pattern)
+{
+    CS2SX_Regex* r = (CS2SX_Regex*)malloc(sizeof(CS2SX_Regex));
+    if (!r) return NULL;
+    strncpy(r->pattern, pattern ? pattern : "", sizeof(r->pattern)-1);
+    r->pattern[sizeof(r->pattern)-1] = '\0';
+    return r;
+}
+static inline void CS2SX_Regex_Free(CS2SX_Regex* r) { free(r); }
+
+// ── Regex helpers (POSIX regex.h) ────────────────────────────────────────────
+// Uses POSIX regex available via musl libc on Nintendo Switch.
+#include <regex.h>
+
+static inline int CS2SX_Regex_IsMatch(const char* input, const char* pattern)
+{
+    if (!input || !pattern) return 0;
+    regex_t rx;
+    if (regcomp(&rx, pattern, REG_EXTENDED | REG_NOSUB) != 0) return 0;
+    int r = regexec(&rx, input, 0, NULL, 0) == 0 ? 1 : 0;
+    regfree(&rx);
+    return r;
+}
+
+static inline void CS2SX_Regex_Match(const char* input, const char* pattern,
+                                      char* out_buf, int out_size)
+{
+    if (!input || !pattern || !out_buf || out_size <= 0) return;
+    out_buf[0] = '\0';
+    regex_t rx;
+    if (regcomp(&rx, pattern, REG_EXTENDED) != 0) return;
+    regmatch_t m;
+    if (regexec(&rx, input, 1, &m, 0) == 0 && m.rm_so >= 0)
+    {
+        int len = m.rm_eo - m.rm_so;
+        if (len >= out_size) len = out_size - 1;
+        memcpy(out_buf, input + m.rm_so, len);
+        out_buf[len] = '\0';
+    }
+    regfree(&rx);
+}
+
+static inline void CS2SX_Regex_Replace(const char* input, const char* pattern,
+                                         const char* replacement,
+                                         char* out_buf, int out_size)
+{
+    if (!input || !pattern || !replacement || !out_buf || out_size <= 0) return;
+    out_buf[0] = '\0';
+    regex_t rx;
+    if (regcomp(&rx, pattern, REG_EXTENDED) != 0) { strncpy(out_buf, input, out_size-1); return; }
+    const char* src = input;
+    int pos = 0;
+    regmatch_t m;
+    while (pos < out_size - 1 && regexec(&rx, src, 1, &m, 0) == 0 && m.rm_so >= 0)
+    {
+        int before = m.rm_so;
+        if (pos + before >= out_size - 1) break;
+        memcpy(out_buf + pos, src, before); pos += before;
+        int replen = (int)strlen(replacement);
+        if (pos + replen >= out_size - 1) replen = out_size - 1 - pos;
+        memcpy(out_buf + pos, replacement, replen); pos += replen;
+        src += m.rm_eo;
+        if (m.rm_eo == m.rm_so) { if (*src) out_buf[pos++] = *src++; else break; }
+    }
+    int rest = (int)strlen(src);
+    if (pos + rest >= out_size) rest = out_size - 1 - pos;
+    memcpy(out_buf + pos, src, rest); pos += rest;
+    out_buf[pos] = '\0';
+    regfree(&rx);
+}
+
+static inline List_str* CS2SX_Regex_Split(const char* input, const char* pattern)
+{
+    List_str* result = List_str_New();
+    if (!input || !pattern) return result;
+    regex_t rx;
+    if (regcomp(&rx, pattern, REG_EXTENDED) != 0) { List_str_Add(result, input); return result; }
+    const char* src = input;
+    regmatch_t m;
+    while (regexec(&rx, src, 1, &m, 0) == 0 && m.rm_so >= 0)
+    {
+        char tmp[CS2SX_STRBUF_SIZE];
+        int len = (int)m.rm_so;
+        if (len >= CS2SX_STRBUF_SIZE - 1) len = CS2SX_STRBUF_SIZE - 1;
+        memcpy(tmp, src, (size_t)len); tmp[len] = '\0';
+        List_str_Add(result, tmp);
+        src += m.rm_eo;
+        if (m.rm_eo == m.rm_so && *src) src++;
+    }
+    if (*src) List_str_Add(result, src);
+    regfree(&rx);
+    return result;
 }
 
 // ============================================================================
