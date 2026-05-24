@@ -1,3 +1,4 @@
+using LibNX.Services;
 using System;
 using System.Collections.Generic;
 
@@ -59,6 +60,13 @@ namespace multiWindow.UI
 
             return true; // consumed — stay in taskbar area
         }
+        public int GetTabX(Window win)
+        {
+            for (int i = 0; i < _windows.Count; i++)
+                if (_windows[i] == win)
+                    return TabStartX + i * (TabW + TabGap) + TabW / 2;
+            return 640; // fallback: Bildschirmmitte
+        }
 
         // ── Drawing ───────────────────────────────────────────────────────────
         public void Draw()
@@ -76,7 +84,7 @@ namespace multiWindow.UI
                 _startIconLoaded = true;
             }
 
-            Graphics.FillRect(StartBtnX, BarY + 4, StartBtnW, BarH - 8, Color.RGB(0, 120, 215));
+            Graphics.FillRoundedRect(StartBtnX, BarY + 4, StartBtnW, BarH - 8,6, Color.RGB(0, 120, 215));
             if (_startIcon != null)
             {
                 Graphics.DrawTextureCenteredScaled(_startIcon,
@@ -94,35 +102,45 @@ namespace multiWindow.UI
             // Window tabs
             for (int i = 0; i < _windows.Count; i++)
             {
-                int x0       = TabStartX + i * (TabW + TabGap);
-                bool active   = _windows[i].IsActive;
+                int x0 = TabStartX + i * (TabW + TabGap);
+                bool active = _windows[i].IsActive;
                 bool minimized = _windows[i].IsMinimized;
 
-                uint tabBg = active    ? Color.RGB(60, 60, 60)
-                           : minimized ? Color.RGB(26, 26, 26)
-                                       : Color.RGB(38, 38, 38);
+                // Background
+                uint tabBg = active ? Color.RGB(50, 50, 55)
+                           : minimized ? Color.RGB(28, 28, 30)
+                                       : Color.RGB(38, 38, 42);
 
-                Graphics.FillRect(x0, BarY + 4, TabW, BarH - 8, tabBg);
+                Graphics.FillRoundedRect(x0, BarY + 3, TabW, BarH - 6, 5, tabBg);
 
-                // Active indicator: blue for focused, amber for minimized
+                // Left accent bar
+                uint accentColor = active && !minimized ? Color.RGB(0, 120, 215)
+                                 : minimized ? Color.RGB(180, 110, 20)
+                                                        : Color.RGB(70, 70, 75);
+                Graphics.FillRoundedRect(x0, BarY + 3, 3, BarH - 6, 2, accentColor);
+
+                // Bottom indicator (active only)
                 if (active && !minimized)
-                    Graphics.FillRect(x0, BarY + BarH - 4, TabW, 3, Color.RGB(0, 120, 215));
-                else if (minimized)
-                    Graphics.FillRect(x0, BarY + BarH - 4, TabW, 3, Color.RGB(180, 110, 20));
+                    Graphics.FillRect(x0 + 3, BarY + BarH - 3, TabW - 3, 2, Color.RGB(0, 120, 215));
 
-                // Tab title (truncate if too long)
+                // Title
                 string title = _windows[i].Title;
                 if (title.Length > 13)
-                    title = title.Substring(0, 12) + "~";
+                    title = title.Substring(0, 12) + "…";
 
-                uint titleColor = minimized ? Color.RGB(140, 140, 140) : Color.White;
+                uint titleColor = active ? Color.White
+                                : minimized ? Color.RGB(120, 120, 125)
+                                            : Color.RGB(190, 190, 195);
+
                 int twH = Graphics.MeasureTextHeight(2);
-                Graphics.DrawText(x0 + 8, BarY + (BarH - twH) / 2, title, titleColor, 2);
+                Graphics.DrawText(x0 + 14, BarY + (BarH - twH) / 2, title, titleColor, 2);
             }
 
             // Time and battery (bottom-right)
-            TimeInfo   t    = System.GetTime();
-            BatteryInfo bat = System.GetBattery();
+            TimeInfo   t    = NX.GetTime();
+            BatteryInfo bat = NX.GetBattery();
+            
+
 
             string hh  = t.hour   < 10 ? "0" + t.hour   : "" + t.hour;
             string mm  = t.minute < 10 ? "0" + t.minute : "" + t.minute;
