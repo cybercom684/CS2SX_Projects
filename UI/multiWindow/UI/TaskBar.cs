@@ -16,8 +16,9 @@ namespace multiWindow.UI
         private const int TabStartX = StartBtnX + StartBtnW + 6;
 
         // ── Callbacks (set by Desktop) ─────────────────────────────────────
-        public Action         OnStartTapped { get; set; } = () => { };
-        public Action<Window> OnTabTapped   { get; set; } = _ => { };
+        public Action         OnStartTapped      { get; set; } = () => { };
+        public Action<Window> OnTabTapped        { get; set; } = _ => { };
+        public Action         OnSystemTrayTapped { get; set; } = () => { };
 
         // ── Start button icon ─────────────────────────────────────────────────
         private const int StartIconSize  = 30;   // icon rendered at this px size
@@ -56,6 +57,13 @@ namespace multiWindow.UI
                     OnTabTapped(_windows[i]);
                     return true;
                 }
+            }
+
+            // System tray (time + battery area)
+            if (tx >= 1280 - 160)
+            {
+                OnSystemTrayTapped();
+                return true;
             }
 
             return true; // consumed — stay in taskbar area
