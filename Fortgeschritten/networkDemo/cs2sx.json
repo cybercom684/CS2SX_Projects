@@ -1,0 +1,15 @@
+{
+  "name": "networkDemo",
+  "author": "Unknown",
+  "version": "1.0.0",
+  "mainClass": "networkDemoApp",
+  "icon": "icon.jpg",
+  "externLibs": [
+    {
+      "name": "NetClient",
+      "includeDir": "externLibs/NetClient",
+      "sources": ["externLibs/NetClient/net_client.c"],
+      "libs": ["-lnx"]
+    }
+  ]
+}
