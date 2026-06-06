@@ -1,0 +1,7 @@
+{
+    "name": "piano",
+    "author": "Unknown",
+    "version": "1.0.0",
+    "mainClass": "pianoApp",
+    "icon": "icon.jpg"
+}

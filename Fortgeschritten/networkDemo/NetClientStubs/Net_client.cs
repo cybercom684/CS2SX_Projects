@@ -1,5 +1,10 @@
-// CS2SX NetClient v1.1 stubs — IDE support only, not transpiled.
-// NetClient.Method() → NetClient_Method() in generated C.
+﻿// Auto-generated from externLibs/NetClient/net_client.h
+// DO NOT EDIT — regeneriert via cs2sx addLib
+//
+// HINWEIS: Diese Datei dient NUR der IDE-Unterstützung (Roslyn-Typen).
+// Der Ordner 'NetClientStubs/' ist in ProjectReader.s_excludedDirNames
+// gelistet und wird NICHT von CS2SX transpiliert.
+// Die echten C-Funktionen werden direkt aus externLibs/ mitcompiliert.
 
 #pragma warning disable CS0626, CS0649, CS0169, CS8981, CS1591
 
@@ -7,53 +12,35 @@ namespace NetClient;
 
 public static class NetClient
 {
-    // Init / Exit
-    public static extern int    Init();
-    public static extern void   Exit();
-
-    // Config
-    public static extern void   UseHttps(int enable);
-    public static extern void   SetHeader(string name, string value);
-    public static extern void   ClearHeaders();
-    public static extern void   SetTimeout(int connect_s, int io_s);
-
-    // Async requests
-    public static extern int    BeginGet(string host, string path);
-    public static extern int    BeginPost(string host, string path, string body, string contentType);
-    public static extern int    BeginPut(string host, string path, string body, string contentType);
-    public static extern int    BeginDelete(string host, string path);
-    public static extern int    BeginHead(string host, string path);
-    public static extern int    BeginDownload(string host, string path, string savepath);
-
-    // Poll
-    public static extern int    IsComplete();
-    public static extern int    WasSuccess();
-    public static extern void   Finish();
-
-    // Response
-    public static extern string GetResponse();
-    public static extern int    GetResponseLen();
-    public static extern int    GetStatusCode();
-    public static extern string GetRespHeader(string name);
-    public static extern string GetError();
-
-    // URL helpers
-    public static extern void   UrlEncode(string input, string output, int outsz);
-    public static extern void   ParseUrl(string url, string host, int hostsz, string path, int pathsz, ref int useHttps);
-
-    // JSON helpers
-    public static extern string JsonStr(string json, string field, string outbuf, int outsz);
-    public static extern int    JsonInt(string json, string field, int defVal);
-    public static extern float  JsonFloat(string json, string field, float defVal);
-    public static extern int    JsonBool(string json, string field, int defVal);
-
-    // Weather / per-city
-    public static extern string GetWeatherTemp();
-    public static extern string GetWeatherWind();
-    public static extern int    GetWeatherCode();
-    public static extern void   StoreCityResult(int idx);
-    public static extern string GetCityDisplay(int idx);
-
-    // Legacy
-    public static extern int    StartRequest(string host, string path);
+    public static extern int NetClient_Init();
+    public static extern void NetClient_Exit();
+    public static extern void NetClient_UseHttps(int enable);
+    public static extern void NetClient_SetHeader(string name, string value);
+    public static extern void NetClient_ClearHeaders();
+    public static extern void NetClient_SetTimeout(int connect_s, int io_s);
+    public static extern int NetClient_BeginGet(string host, string path);
+    public static extern int NetClient_BeginPost(string host, string path, string body, string content_type);
+    public static extern int NetClient_BeginPut(string host, string path, string body, string content_type);
+    public static extern int NetClient_BeginDelete(string host, string path);
+    public static extern int NetClient_BeginHead(string host, string path);
+    public static extern int NetClient_BeginDownload(string host, string path, string savepath);
+    public static extern int NetClient_IsComplete();
+    public static extern int NetClient_WasSuccess();
+    public static extern void NetClient_Finish();
+    public static extern string NetClient_GetResponse();
+    public static extern int NetClient_GetResponseLen();
+    public static extern int NetClient_GetStatusCode();
+    public static extern string NetClient_GetRespHeader(string name);
+    public static extern string NetClient_GetError();
+    public static extern void NetClient_UrlEncode(string input, ref byte output, int outsz);
+    public static extern void NetClient_ParseUrl(string url, ref byte host, int hostsz, ref byte path, int pathsz, ref int use_https);
+    public static extern string NetClient_JsonStr(string json, string field, ref byte @out, int outsz);
+    public static extern int NetClient_JsonInt(string json, string field, int def_val);
+    public static extern float NetClient_JsonFloat(string json, string field, float def_val);
+    public static extern int NetClient_JsonBool(string json, string field, int def_val);
+    public static extern string NetClient_GetWeatherTemp();
+    public static extern string NetClient_GetWeatherWind();
+    public static extern int NetClient_GetWeatherCode();
+    public static extern void NetClient_StoreCityResult(int idx);
+    public static extern string NetClient_GetCityDisplay(int idx);
 }
